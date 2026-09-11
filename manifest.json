@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "davidjm.media-idle",
+  "name": "Media Idle Inhibit",
+  "version": "1.0.0",
+  "author": "David JM",
+  "license": "MIT",
+  "description": "Keeps the screensaver and display sleep from kicking in while media is playing. Watches MPRIS players (Jellyfin Desktop, browser playback, mpv, etc.) and disables the Omarchy idle/lock chain for as long as anything is Playing.",
+  "kinds": ["service"],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
