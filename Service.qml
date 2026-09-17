@@ -16,10 +16,15 @@ Item {
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
 
-  // Effective state we last commanded the idle service into.
+  // Last state successfully applied to the idle service.
   property bool idleDisabledByUs: false
+  // Desired idle state derived from MPRIS playback.
+  property bool wantIdleDisabled: false
   // True while an IPC toggle is in flight; we re-reconcile when it exits.
   property bool commandInFlight: false
+  // State carried by the in-flight command (committed on a clean exit).
+  property bool pendingDisable: false
+  property int failures: 0
   property string lastCommand: ""
   property string lastEvent: "starting"
   property string lastEventAt: ""
@@ -43,33 +48,69 @@ Item {
     return false
   }
 
+  function scheduleRetry() {
+    retryTimer.interval = Math.min(30000, 500 * Math.max(1, root.failures))
+    retryTimer.restart()
+  }
+
   // Desired idle state: disabled (stay awake) while anything plays. Compare
-  // against what we last issued; if they differ, send one IPC toggle. State
-  // changes during a toggle's flight are reconciled once it exits.
+  // against what was successfully applied; if they differ, send one IPC toggle.
+  // State changes during a toggle's flight are reconciled once it exits.
   function reconcile() {
-    if (root.commandInFlight) return
     var playing = root.anyPlayerPlaying()
-    var wantDisable = playing
-    var wantCommand = wantDisable ? "disable" : "enable"
+    root.wantIdleDisabled = playing
 
-    if (wantDisable === root.idleDisabledByUs) return
+    if (root.commandInFlight) return
+    if (root.wantIdleDisabled === root.idleDisabledByUs) return
 
-    root.idleDisabledByUs = wantDisable
     root.commandInFlight = true
-    root.lastCommand = wantCommand
-    logEvent("idle-" + wantCommand, "playing=" + playing)
+    root.pendingDisable = root.wantIdleDisabled
+    root.lastCommand = root.pendingDisable ? "disable" : "enable"
+    logEvent("idle-" + root.lastCommand, "playing=" + playing)
 
-    idleIpc.command = ["bash", "-lc", "omarchy-shell -q idle " + wantCommand]
+    idleIpc.command = ["omarchy-shell", "-q", "idle", root.lastCommand]
     idleIpc.running = true
+    commandWatchdog.restart()
   }
 
   Process {
     id: idleIpc
     onExited: function(exitCode, exitStatus) {
+      commandWatchdog.stop()
       root.commandInFlight = false
       root.logEvent("ipc-exit", "code=" + exitCode + " status=" + exitStatus)
+      if (exitCode !== 0) {
+        // The idle service may not be ready yet; back off and retry. Do not
+        // commit idleDisabledByUs, so the next reconcile re-issues the toggle.
+        root.failures += 1
+        root.scheduleRetry()
+        return
+      }
+      root.failures = 0
+      root.idleDisabledByUs = root.pendingDisable
       root.reconcile()
     }
+  }
+
+  // A hung omarchy-shell invocation must not wedge the reconcile loop forever.
+  Timer {
+    id: commandWatchdog
+    interval: 5000
+    repeat: false
+    onTriggered: {
+      if (!root.commandInFlight) return
+      root.logEvent("ipc-timeout", root.lastCommand)
+      root.commandInFlight = false
+      idleIpc.running = false
+      root.failures += 1
+      root.scheduleRetry()
+    }
+  }
+
+  Timer {
+    id: retryTimer
+    repeat: false
+    onTriggered: root.reconcile()
   }
 
   // Mpris.players is a bindable singleton property; rooting it through
@@ -98,7 +139,9 @@ Item {
         anyPlaying: root.anyPlayerPlaying(),
         players: root.players.length,
         idleDisabledByUs: root.idleDisabledByUs,
+        wantIdleDisabled: root.wantIdleDisabled,
         commandInFlight: root.commandInFlight,
+        failures: root.failures,
         lastCommand: root.lastCommand,
         lastEvent: root.lastEvent,
         lastEventAt: root.lastEventAt
