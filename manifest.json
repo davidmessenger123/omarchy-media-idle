@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "David JM",
   "license": "MIT",
-  "description": "Keeps the screensaver and display sleep from kicking in while media is playing. Watches MPRIS players (Jellyfin Desktop, browser playback, mpv, etc.) and disables the Omarchy idle/lock chain for as long as anything is Playing.",
+  "description": "Keeps the screensaver and display sleep from kicking in while trusted MPRIS media is playing. It requires an explicit idle-service acknowledgement and status verification, uses a bounded inhibition lease and retry backoff, and cleans up only an inhibition it owns.",
   "kinds": ["service"],
   "entryPoints": {
     "service": "Service.qml"
