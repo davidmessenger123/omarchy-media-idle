@@ -22,7 +22,7 @@ class MediaIdleContractTests(unittest.TestCase):
         cls.source = (Path(__file__).parents[1] / "Service.qml").read_text(encoding="utf-8")
 
     def test_shell_environment_uses_fixed_system_path(self):
-        with tempfile.TemporaryDirectory() as runtime:
+        with tempfile.TemporaryDirectory() as runtime, fake_omarchy_path() as omarchy:
             os.chmod(runtime, 0o700)
             with runtime_environment(runtime):
                 lock_fd = idle_control._open_lock(idle_control.lock_file_path(), exclusive=True, create=True)
@@ -35,6 +35,7 @@ class MediaIdleContractTests(unittest.TestCase):
                 self.assertEqual((code, stdout, stderr), (0, b"{}", b""))
         environment = popen.call_args.kwargs["env"]
         self.assertEqual(environment["PATH"], idle_control.SYSTEM_PATH)
+        self.assertEqual(environment["OMARCHY_PATH"], omarchy)
         self.assertNotIn("PYTHONPATH", environment)
         self.assertNotIn("LD_PRELOAD", environment)
 
@@ -208,6 +209,27 @@ class MediaIdleContractTests(unittest.TestCase):
                 self.assertEqual(os.stat(log_path).st_mode & 0o777, 0o600)
                 with open(log_path, encoding="utf-8") as handle:
                     self.assertIn("verified cleanup diagnostic", handle.read())
+
+
+@contextmanager
+def fake_omarchy_path():
+    # _command_environment validates OMARCHY_PATH before forwarding it, so the
+    # test has to supply a directory that passes the same checks. macOS resolves
+    # /tmp through a symlink, so realpath it to keep the normalization check happy.
+    with tempfile.TemporaryDirectory() as root:
+        omarchy = os.path.realpath(root)
+        shell = Path(omarchy) / "shell"
+        shell.mkdir(mode=0o700)
+        (shell / "shell.qml").write_text("import Quickshell\n", encoding="utf-8")
+        previous = os.environ.get("OMARCHY_PATH")
+        os.environ["OMARCHY_PATH"] = omarchy
+        try:
+            yield omarchy
+        finally:
+            if previous is None:
+                os.environ.pop("OMARCHY_PATH", None)
+            else:
+                os.environ["OMARCHY_PATH"] = previous
 
 
 @contextmanager
