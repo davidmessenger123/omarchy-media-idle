@@ -272,6 +272,30 @@ def _child_setup(parent_pid):
     return setup
 
 
+def _omarchy_path():
+    # omarchy-shell loads its QML from $OMARCHY_PATH/shell, so the variable has
+    # to reach it or every call fails with "OMARCHY_PATH is not set". It also
+    # picks the payload quickshell evaluates, so validate rather than forward
+    # blindly.
+    value = os.environ.get("OMARCHY_PATH", "")
+    if not isinstance(value, str) or not value or not os.path.isabs(value):
+        raise ControlError("OMARCHY_PATH is not set")
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ControlError("OMARCHY_PATH is invalid")
+    resolved = os.path.realpath(value)
+    if os.path.normpath(value) != value or resolved != value:
+        raise ControlError("OMARCHY_PATH is not normalized")
+    try:
+        info = os.stat(value)
+    except OSError as exc:
+        raise ControlError("OMARCHY_PATH is unavailable") from exc
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.geteuid()):
+        raise ControlError("OMARCHY_PATH is not a trusted directory")
+    if not os.path.isfile(os.path.join(value, "shell", "shell.qml")):
+        raise ControlError("OMARCHY_PATH has no shell configuration")
+    return value
+
+
 def _command_environment():
     names = (
         "HOME",
@@ -283,12 +307,14 @@ def _command_environment():
         "DBUS_SESSION_BUS_ADDRESS",
         "WAYLAND_DISPLAY",
         "DISPLAY",
+        "OMARCHY_SHELL_IPC_TIMEOUT",
     )
     environment = {name: os.environ[name] for name in names if name in os.environ}
     environment.update({
         "PATH": SYSTEM_PATH,
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
+        "OMARCHY_PATH": _omarchy_path(),
     })
     return environment
 

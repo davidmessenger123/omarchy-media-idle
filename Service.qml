@@ -83,16 +83,68 @@ Item {
     return String(player.dbusName || player.desktopEntry || player.identity || "").slice(0, 512)
   }
 
+  // Reverse-DNS ids and display names hide the vendor token inside decoration:
+  // "io.github.celluloid_player.celluloid" and "Jellyfin Desktop" both only
+  // expose it as a fragment, so a single whole-string comparison never matches
+  // a configured "celluloid" or "jellyfin".
+  readonly property var noiseTokens: {
+    var noise = {}
+    var generic = [
+      "org", "com", "net", "io", "de", "dev", "app", "apps", "co", "uk", "me",
+      "github", "gitlab", "gnome", "kde", "qt", "player", "players", "media",
+      "mediaplayer", "mediaplayer2", "mpris", "instance", "desktop",
+      "application", "x", "the", "player2"
+    ]
+    for (var i = 0; i < generic.length; i++) noise[generic[i]] = true
+    return noise
+  }
+
+  // Splits on separators and camelCase boundaries, dropping tokens that carry no
+  // vendor information, so "org.jellyfin.JellyfinDesktop" yields "jellyfin".
+  function tokenSegments(raw) {
+    var value = String(raw || "").slice(0, 512)
+    if (!value) return []
+    var spaced = value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    var parts = spaced.split(/[^A-Za-z0-9]+/)
+    var output = []
+    for (var i = 0; i < parts.length; i++) {
+      var segment = root.normalizedToken(parts[i])
+      if (!segment || root.noiseTokens[segment] === true) continue
+      if (output.indexOf(segment) === -1) output.push(segment)
+    }
+    return output
+  }
+
+  // A bare entry like "jellyfin" is a whole name and only matches whole tokens.
+  // An entry carrying separators is a reverse-DNS id or executable name, so it
+  // additionally matches on the informative fragments inside it.
+  function allowedTokens(entry) {
+    var raw = String(entry || "").slice(0, 512)
+    var tokens = []
+    var whole = root.normalizedToken(raw)
+    if (whole) tokens.push(whole)
+    if (!/[.\-_ ]/.test(raw.trim())) return tokens
+    var segments = root.tokenSegments(raw)
+    for (var i = 0; i < segments.length; i++) {
+      if (tokens.indexOf(segments[i]) === -1) tokens.push(segments[i])
+    }
+    return tokens
+  }
+
   function playerTokens(player) {
     if (!player) return []
     var values = [player.dbusName, player.desktopEntry, player.identity]
     var output = []
+    function push(token) {
+      if (token && output.indexOf(token) === -1) output.push(token)
+    }
     for (var i = 0; i < values.length; i++) {
       var raw = String(values[i] || "").slice(0, 512)
-      var normalized = root.normalizedToken(raw)
-      if (normalized) output.push(normalized)
-      var shortName = root.normalizedToken(raw.replace(/^org\.mpris\.MediaPlayer2\./i, ""))
-      if (shortName && output.indexOf(shortName) === -1) output.push(shortName)
+      if (!raw) continue
+      push(root.normalizedToken(raw))
+      push(root.normalizedToken(raw.replace(/^org\.mpris\.MediaPlayer2\./i, "")))
+      var segments = root.tokenSegments(raw)
+      for (var s = 0; s < segments.length; s++) push(segments[s])
     }
     return output
   }
@@ -102,8 +154,8 @@ Item {
     var allowed = String(root.trustedPlayerList || "").toLowerCase().split(",")
     var normalizedAllowed = []
     for (var i = 0; i < allowed.length; i++) {
-      var token = root.normalizedToken(allowed[i])
-      if (token) normalizedAllowed.push(token)
+      var tokens = root.allowedTokens(allowed[i])
+      for (var t = 0; t < tokens.length; t++) normalizedAllowed.push(tokens[t])
     }
     var actual = root.playerTokens(player)
     for (var a = 0; a < normalizedAllowed.length; a++) {
