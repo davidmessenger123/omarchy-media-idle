@@ -17,6 +17,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Python syntax
-        run: python3 -m py_compile idle_control.py
+        run: python3 -m py_compile idle_control.py player_select.py
       - name: Python unit tests
         run: python3 -m unittest discover -s tests

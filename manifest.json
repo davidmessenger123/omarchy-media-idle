@@ -5,9 +5,11 @@
   "version": "1.0.0",
   "author": "David JM",
   "license": "MIT",
-  "description": "Keeps the screensaver and display sleep from kicking in while trusted MPRIS media is playing. It requires an explicit idle-service acknowledgement and status verification, uses a bounded inhibition lease and retry backoff, and cleans up only an inhibition it owns.",
-  "kinds": ["service"],
+  "description": "Keeps the screensaver and display sleep from kicking in while trusted MPRIS media is playing. It requires an explicit idle-service acknowledgement and status verification, uses a bounded inhibition lease and retry backoff, and cleans up only an inhibition it owns. Summon the picker with: omarchy-shell shell summon davidjm.media-idle '{}'",
+  "kinds": ["service", "overlay"],
+  "keepLoaded": true,
   "entryPoints": {
-    "service": "Service.qml"
+    "service": "Service.qml",
+    "overlay": "Players.qml"
   }
 }

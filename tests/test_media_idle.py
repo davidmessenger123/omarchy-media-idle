@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import subprocess
 import sys
@@ -243,6 +244,82 @@ def runtime_environment(path):
             os.environ.pop("XDG_RUNTIME_DIR", None)
         else:
             os.environ["XDG_RUNTIME_DIR"] = old_value
+
+
+class PickerWiringTests(unittest.TestCase):
+    """The picker and the service must agree, and must both be driven by the
+    selection file rather than by an edit to a shell config."""
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).parents[1]
+        cls.service = (root / "Service.qml").read_text(encoding="utf-8")
+        cls.players = (root / "Players.qml").read_text(encoding="utf-8")
+        cls.shared = (root / "TrustedPlayers.js").read_text(encoding="utf-8")
+        cls.manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+
+    def test_matching_is_shared_not_duplicated(self):
+        # If either side carried its own copy, the picker could tick a box the
+        # service then disagrees with.
+        self.assertIn('import "TrustedPlayers.js" as TrustedPlayers', self.service)
+        self.assertIn('import "TrustedPlayers.js" as TrustedPlayers', self.players)
+        self.assertIn("TrustedPlayers.isTrustedPlayer(player, root.allowTokens)", self.service)
+
+        self.assertNotIn("function tokenSegments", self.service)
+        self.assertNotIn("function playerTokens", self.service)
+        self.assertNotIn("function allowedTokens", self.service)
+        self.assertIn("function tokenSegments", self.shared)
+        self.assertIn("function playerTokens", self.shared)
+        self.assertIn("function allowedTokens", self.shared)
+
+    def test_both_sides_resolve_the_same_allowlist(self):
+        for source in (self.service, self.players):
+            self.assertIn("TrustedPlayers.effective(root.baseTrustedPlayerList, root.selection)", source)
+            self.assertIn('Quickshell.env("OMARCHY_MEDIA_IDLE_TRUSTED_PLAYERS")', source)
+            self.assertIn("TrustedPlayers.DEFAULT_PLAYERS", source)
+
+    def test_service_watches_the_selection_file_for_changes(self):
+        # A picker toggle that needed a shell restart would not be a picker.
+        self.assertIn("applySelection", self.service)
+        self.assertIn("watchChanges: true", self.service)
+        self.assertIn("atomicWrites: true", self.service)
+        self.assertIn("onFileChanged: reload()", self.service)
+        self.assertIn("root.notePlayerChange()", self.service)
+        self.assertIn("/omarchy/media-idle.json", self.service)
+
+    def test_picker_reads_and_writes_through_the_helper(self):
+        self.assertIn("player_select.py", self.players)
+        self.assertIn('root.helper, "state"', self.players)
+        self.assertIn('root.helper, "list"', self.players)
+        self.assertIn('root.helper, "set", setProc.pendingId, setProc.pendingOn', self.players)
+        # The picker must not invent its own resolution of the file.
+        self.assertNotIn("FileView", self.players)
+
+    def test_picker_takes_checkbox_state_from_the_shared_matcher(self):
+        self.assertIn("TrustedPlayers.isCandidateTrusted", self.players)
+        self.assertIn("TrustedPlayers.candidateIdForPlayer", self.players)
+
+    def test_picker_implements_the_overlay_lifecycle(self):
+        # The shell summons by id, reads `opened` for toggle state, and calls
+        # these hooks; without them the overlay never appears.
+        self.assertIn("property bool opened: false", self.players)
+        self.assertIn("function open(payload)", self.players)
+        self.assertIn("function close()", self.players)
+        self.assertIn("PanelWindow", self.players)
+        self.assertIn("WlrLayershell.keyboardFocus", self.players)
+
+    def test_manifest_exposes_the_overlay_next_to_the_service(self):
+        self.assertIn("overlay", self.manifest["kinds"])
+        self.assertIn("service", self.manifest["kinds"])
+        self.assertEqual(self.manifest["entryPoints"]["overlay"], "Players.qml")
+        self.assertEqual(self.manifest["entryPoints"]["service"], "Service.qml")
+
+    def test_selection_parsing_is_total_in_both_implementations(self):
+        # Service.qml and player_select.py each parse this file. Neither may
+        # throw on a malformed one: a typo must not take the service down.
+        self.assertIn("function parseSelection", self.shared)
+        self.assertIn("catch (error)", self.shared)
+        self.assertIn("except (ValueError, UnicodeError)", Path(__file__).parents[1].joinpath("player_select.py").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

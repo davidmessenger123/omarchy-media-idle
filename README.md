@@ -68,14 +68,14 @@ Both settings are environment variables read from the `omarchy-shell` process.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OMARCHY_MEDIA_IDLE_TRUSTED_PLAYERS` | see `Service.qml` | Comma-separated allowlist of players allowed to inhibit idle. |
+| `OMARCHY_MEDIA_IDLE_TRUSTED_PLAYERS` | see `TrustedPlayers.js` | Comma-separated allowlist of players allowed to inhibit idle. |
 | `OMARCHY_MEDIA_IDLE_MAX_MINUTES` | `30` | Lease length in minutes, clamped to `5`–`120`. |
 
 Set them in `~/.config/hypr/hyprland.lua`, because the shell inherits
 Hyprland's session environment:
 
 ```lua
-hl.env("OMARCHY_MEDIA_IDLE_TRUSTED_PLAYERS", "spotify,vlc,mpv,jellyfin,cliamp")
+hl.env("OMARCHY_MEDIA_IDLE_TRUSTED_PLAYERS", "spotify,vlc,mpv,jellyfin")
 hl.env("OMARCHY_MEDIA_IDLE_MAX_MINUTES", "20")
 ```
 
@@ -90,10 +90,76 @@ immediately — the lease runs out first, so idle can stay inhibited for up to
 `OMARCHY_MEDIA_IDLE_MAX_MINUTES` after playback ends. Lower it if that window
 is too long for you.
 
+## Choosing players
+
+The picker is the normal way to change the allowlist. Open it from the Omarchy
+menu under **Style → Trusted Media Players**, or:
+
+```bash
+omarchy-shell shell summon davidjm.media-idle '{}'
+```
+
+It lists two kinds of candidate, merged on the app's desktop-entry id:
+
+- **MPRIS players on the bus right now** — proof that the app really exposes
+  MPRIS, and marked `playing` while they are.
+- **Installed apps that advertise themselves as media players** — a
+  `.desktop` entry whose categories include `AudioVideo` plus at least one of
+  `Player`, `Video`, or `Audio`. Editors and recorders (OBS, Kdenlive, webcam
+  capture) are deliberately left out. Ticking one before you have run it is
+  harmless: it simply never matches until it does.
+
+Type to filter, `Up`/`Down` to move, `Space` or `Enter` to toggle, `Esc` to
+close. Rows are badged `default` (trusted by the built-in list), `added` (you
+trusted it), or `removed` (you removed it).
+
+Ticks take effect immediately — no shell restart — because `Service.qml` watches
+the selection file.
+
+### Where the choices are stored
+
+`~/.config/omarchy/media-idle.json`:
+
+```json
+{
+  "trusted": ["org.kodi.kodi"],
+  "untrusted": ["firefox", "brave"]
+}
+```
+
+The effective allowlist is:
+
+```
+(env var or built-in defaults) + trusted - untrusted
+```
+
+The two lists are always disjoint, and `untrusted` wins if an id somehow appears
+in both — so you can turn off a built-in default without editing the built-in
+list. Writes are atomic and the file is `0600`. A missing, unreadable, or
+malformed file yields empty sets, which degrades to the built-in allowlist
+rather than failing the plugin.
+
+Because your choices live here rather than in an env var, you can usually drop
+the `OMARCHY_MEDIA_IDLE_TRUSTED_PLAYERS` override entirely and let the built-in
+list apply — which also removes the drift of keeping two copies of the same list
+in sync. The env var still wins as the *base*, so leave it in place if you
+deliberately want a different starting set.
+
+To edit the file by hand:
+
+```bash
+python3 ~/.config/omarchy/plugins/davidjm.media-idle/player_select.py state
+python3 ~/.config/omarchy/plugins/davidjm.media-idle/player_select.py set org.kodi.kodi on
+python3 ~/.config/omarchy/plugins/davidjm.media-idle/player_select.py list
+```
+
 ## Adding a player
 
 Only players on the allowlist can inhibit idle. An app that is not listed is
 simply ignored — playback continues normally, the screen just still blanks.
+
+Use the picker above for anything routine. The steps below are for adding an
+entry by hand, or for an app you cannot see in the picker.
 
 ### 1. Find the player's MPRIS identity
 
@@ -131,8 +197,10 @@ omarchy restart shell
 ```
 
 The variable **replaces** the built-in list; it is not merged. Copy the default
-string out of `Service.qml` (`trustedPlayerList`) if you want to keep the
-defaults.
+string out of `TrustedPlayers.js` (`DEFAULT_PLAYERS`) if you want to keep the
+defaults. Remember to add `moonfin` (or any other addition) to *both* this list
+and `~/.config/omarchy/media-idle.json` — or better, drop the env override and
+use the picker.
 
 ### 3. Confirm it matched
 
@@ -246,18 +314,31 @@ rm -f "$XDG_RUNTIME_DIR/omarchy-media-idle.owned"
 ## Development
 
 ```bash
-python3 -m py_compile idle_control.py
+python3 -m py_compile idle_control.py player_select.py
 python3 -m unittest discover -s tests
 ```
 
 `tests/test_media_idle.py` covers the fixed child environment and command
 timeouts, output bounds, per-player leases, stale-command retries and watchdogs,
-guard claim ordering, cleanup retry-until-verified, and the rule that idle is
-never re-enabled without ownership.
+guard claim ordering, cleanup retry-until-verified, the rule that idle is never
+re-enabled without ownership, and the contract between the picker and the
+service — that both resolve the allowlist through the same shared matcher and
+that the service watches the selection file rather than needing a restart.
+
+`tests/test_player_select.py` covers the selection store: malformed, oversized,
+symlinked, and non-regular files; the `trusted`/`untrusted` disjointness rule;
+atomic `0600` writes; and the `.desktop` scan, including that editors and
+recorders are excluded and that a user entry overrides a system one.
 
 Layout:
 
 - `Service.qml` — the Quickshell service: MPRIS watching, leases, IPC handler.
+- `Players.qml` — the picker overlay: candidate list, filter, toggles.
+- `TrustedPlayers.js` — allowlist matching, shared by both so a tick in the
+  picker can never disagree with the decision the service makes.
+- `player_select.py` — reads and writes `media-idle.json`, and enumerates
+  installed media players. Deliberately total: a bad file degrades to the
+  built-in allowlist rather than raising.
 - `idle_control.py` — privileged-free helper that performs and verifies the
   `omarchy-shell idle` calls, owns the lock/marker/guard files, and is the only
   thing that mutates idle state.
