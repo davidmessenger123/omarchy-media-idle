@@ -237,6 +237,14 @@ Entries are lowercased and compared against three properties of each player:
   them. The id is split on separators and camelCase boundaries, and noise words
   such as `org`, `github`, `player`, `media`, `desktop` are discarded, so
   `org.jellyfin.JellyfinDesktop` yields the token `jellyfin`.
+- **Identifiers and display names are split differently.** `dbusName` and
+  `desktopEntry` are machine-written ids, so their camelCase is split —
+  that is what gets `org.jellyfin.JellyfinDesktop` down to `jellyfin`. The
+  MPRIS `Identity` is a human display name and is split on separators only,
+  because splitting its camelCase manufactures trust nobody asked for: `NotVLC`
+  would reduce to the token `vlc` and inherit trust from a configured `vlc`.
+  Granting trust is the half of this matcher that must not be generous, so an
+  app that is only similar to a listed one is ignored.
 
 | Configured entry | Matches |
 | --- | --- |
@@ -329,6 +337,10 @@ that the service watches the selection file rather than needing a restart.
 symlinked, and non-regular files; the `trusted`/`untrusted` disjointness rule;
 atomic `0600` writes; and the `.desktop` scan, including that editors and
 recorders are excluded and that a user entry overrides a system one.
+
+`tests/test_trusted_players_js.py` exercises `TrustedPlayers.js` through `node`,
+covering both what must match and what must not — including that a display name
+cannot inherit trust from a substring. It skips when `node` is unavailable.
 
 Layout:
 

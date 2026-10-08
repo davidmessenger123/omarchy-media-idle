@@ -25,12 +25,15 @@ function normalizedToken(value) {
   return String(value || "").toLowerCase().replace(/^org\.mpris\.mediaplayer2\./, "").replace(/\.instance[0-9]+$/, "").replace(/[^a-z0-9]/g, "")
 }
 
-// Splits on separators and camelCase boundaries, dropping tokens that carry no
-// vendor information, so "org.jellyfin.JellyfinDesktop" yields "jellyfin".
-function tokenSegments(raw) {
+// Splits on separators, and optionally on camelCase boundaries, dropping tokens
+// that carry no vendor information, so "org.jellyfin.JellyfinDesktop" yields
+// "jellyfin".
+function tokenSegments(raw, splitCamel) {
   var value = String(raw || "").slice(0, 512)
   if (!value) return []
-  var spaced = value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+  var spaced = splitCamel === false
+    ? value
+    : value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
   var parts = spaced.split(/[^A-Za-z0-9]+/)
   var output = []
   for (var i = 0; i < parts.length; i++) {
@@ -61,7 +64,15 @@ function allowedTokens(entry) {
 // "io.github.celluloid_player.celluloid" and "Jellyfin Desktop" both only
 // expose it as a fragment, so a single whole-string comparison never matches
 // a configured "celluloid" or "jellyfin".
-function identityTokens(values) {
+//
+// Identifiers and display names are split differently on purpose. Ids are
+// machine-written and carry camelCase that has to be split to be readable
+// ("org.jellyfin.JellyfinDesktop"). Identity is a human display name, and
+// splitting its camelCase manufactures matches nobody asked for: "NotVLC"
+// would yield the token "vlc" and inherit trust from a configured "vlc".
+// Granting trust is the half of this matcher that must not be generous, so
+// display names split on separators only.
+function identityTokens(values, splitCamel) {
   var output = []
   function push(token) {
     if (token && output.indexOf(token) === -1) output.push(token)
@@ -71,7 +82,7 @@ function identityTokens(values) {
     if (!raw) continue
     push(normalizedToken(raw))
     push(normalizedToken(raw.replace(/^org\.mpris\.MediaPlayer2\./i, "")))
-    var segments = tokenSegments(raw)
+    var segments = tokenSegments(raw, splitCamel)
     for (var s = 0; s < segments.length; s++) push(segments[s])
   }
   return output
@@ -79,7 +90,14 @@ function identityTokens(values) {
 
 function playerTokens(player) {
   if (!player) return []
-  return identityTokens([player.dbusName, player.desktopEntry, player.identity])
+  var output = identityTokens([player.dbusName, player.desktopEntry])
+  // The display name is appended separately so it can be split on separators
+  // without the camelCase rule, which only belongs on identifiers.
+  var display = identityTokens([player.identity], false)
+  for (var i = 0; i < display.length; i++) {
+    if (output.indexOf(display[i]) === -1) output.push(display[i])
+  }
+  return output
 }
 
 // Flattens a comma-separated allowlist into the token set a lookup compares
